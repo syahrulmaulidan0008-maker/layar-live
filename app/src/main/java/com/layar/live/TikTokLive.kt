@@ -12,6 +12,8 @@ import kotlin.concurrent.thread
 
 data class Comment(val id: Long, val user: String, val text: String)
 
+private var nextId = 0L   // ID unik di seluruh aplikasi (dipakai sebagai key daftar komentar)
+
 /**
  * Komentar TikTok Live.
  * - relay kosong  -> tersambung langsung dari dalam APK (library TikTokLiveJava, tanpa server).
@@ -22,33 +24,41 @@ class TikTokLive(private val relay: String, user: String, private val onComment:
     private var ws: WebSocket? = null
     private var direct: Any? = null
     private val main = Handler(Looper.getMainLooper())
-    private var n = 0L
-    private fun post(u: String, t: String) = main.post { onComment(Comment(n++, u, t)) }
+    @Volatile private var stopped = false
+    private fun post(u: String, t: String) = main.post { if (!stopped) onComment(Comment(nextId++, u, t)) }
 
     fun start() = if (relay.isBlank()) startDirect() else startRelay()
 
     private fun startDirect() {
         thread {
-            runCatching {
+            try {
                 direct = io.github.jwdeveloper.tiktok.TikTokLive.newClient(name)
                     .onComment { _, e -> post(e.user.profileName, e.text) }
                     .onError { _, e -> post("sistem", "Error: ${e.exception.message}") }
                     .buildAndConnect()
-            }.onFailure { post("sistem", "Gagal tersambung: ${it.message}") }
+            } catch (t: Throwable) { // Throwable: NoClassDefFoundError juga tertangkap, aplikasi tidak crash
+                post("sistem", "Mode langsung gagal di Android (${t.javaClass.simpleName}). Isi alamat relay.")
+            }
         }
     }
 
     private fun startRelay() {
+        if (stopped) return
         val url = relay.trimEnd('/') + "/?user=" + Uri.encode(name)
         ws = OkHttpClient().newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) { post("sistem", "Tersambung ke relay, menunggu komentar…") }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 runCatching { JSONObject(text).let { post(it.getString("user"), it.getString("text")) } }
             }
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) { post("sistem", "Relay putus: ${t.message}") }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+                post("sistem", "Relay putus, mencoba lagi…")
+                main.postDelayed({ startRelay() }, 4000)   // sambung ulang otomatis
+            }
         })
     }
 
     fun stop() {
+        stopped = true
         ws?.close(1000, null)
         runCatching { direct?.let { it.javaClass.getMethod("disconnect").invoke(it) } }
     }

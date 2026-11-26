@@ -184,10 +184,11 @@ fun Screen() {
                 }
                 Spacer(Modifier.height(28.dp))
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    val cover = maxWidth * .46f                       // sampul lebih besar, ikut lebar layar
-                    val peek by animateDpAsState(if (track.playing) maxWidth * .08f else maxWidth * .035f, tween(900), label = "peek")
+                    val w = maxWidth
+                    val cover = w * .46f                       // sampul lebih besar, ikut lebar layar
+                    val peek by animateDpAsState(if (track.playing) w * .08f else w * .035f, tween(900), label = "peek")
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(cover + maxWidth * .08f).height(cover)) {
+                        Box(Modifier.width(cover + w * .08f).height(cover)) {
                             Vinyl(angle, accent, Modifier.size(cover).offset(x = peek))
                             Cover(track.cover, Modifier.size(cover))
                         }

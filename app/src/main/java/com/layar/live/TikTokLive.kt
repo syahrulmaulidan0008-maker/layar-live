@@ -44,7 +44,7 @@ class TikTokLive(private val relay: String, user: String, private val onComment:
             override fun onMessage(webSocket: WebSocket, text: String) {
                 runCatching { JSONObject(text).let { post(it.getString("user"), it.getString("text")) } }
             }
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) = post("sistem", "Relay putus: ${t.message}")
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) { post("sistem", "Relay putus: ${t.message}") }
         })
     }
 

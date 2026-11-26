@@ -2,6 +2,7 @@ package com.layar.live
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
@@ -11,6 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,6 +24,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -116,9 +120,22 @@ fun Screen() {
     DisposableEffect(user, relay) {
         var c: TikTokLive? = null
         if (user.isNotBlank()) {
-            c = TikTokLive(relay, user) { comments.add(it); if (comments.size > 4) comments.removeAt(0) }.also { it.start() }
+            c = TikTokLive(relay, user) { n ->
+                comments.removeAll { it.user == "sistem" }   // pesan status diganti komentar asli
+                comments.add(n)
+                while (comments.size > 4) comments.removeAt(0)
+            }.also { it.start() }
         }
         onDispose { c?.stop() }
+    }
+
+    // komentar yang sudah lama keluar sendiri dengan animasi
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            val now = SystemClock.elapsedRealtime()
+            comments.removeAll { it.user != "sistem" && now - it.at > 20_000 }
+        }
     }
 
     val spin by animateFloatAsState(if (track.playing) 1f else 0f, tween(1500), label = "spin")
@@ -137,8 +154,6 @@ fun Screen() {
         }
     }
 
-    val top by animateColorAsState(colors.first, tween(1000), label = "top")
-    val accent by animateColorAsState(colors.second, tween(1000), label = "acc")
     val top by animateColorAsState(colors.first, tween(1000), label = "top")
     val accent by animateColorAsState(colors.second, tween(1000), label = "acc")
 
@@ -205,11 +220,12 @@ fun Screen() {
                     listOf(Comment(-1, "sistem", if (user.isBlank()) "Ketuk “SEDANG DIPUTAR” untuk menghubungkan akun TikTok" else "Menunggu komentar dari @$user…"))
                 else comments.reversed()
                 LazyColumn(Modifier.weight(1f).fillMaxWidth().edgeFade(.22f, 1f), reverseLayout = true, userScrollEnabled = false) {
-                    items(shown, key = { it.id }) { c ->
-                        GlassComment(c.user, c.text, Modifier.animateItem(
+                    itemsIndexed(shown, key = { _, c -> c.id }) { i, c ->
+                        GlassComment(c.user, c.text, i, Modifier.animateItem(
                             fadeInSpec = null,
-                            placementSpec = spring(stiffness = Spring.StiffnessLow, visibilityThreshold = IntOffset.VisibilityThreshold),
-                            fadeOutSpec = tween(400)))
+                            // komentar lama naik dengan pegas halus saat ada yang baru masuk
+                            placementSpec = spring(dampingRatio = .78f, stiffness = Spring.StiffnessMediumLow, visibilityThreshold = IntOffset.VisibilityThreshold),
+                            fadeOutSpec = tween(500)))
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -246,16 +262,20 @@ fun Modifier.edgeFade(topEnd: Float, bottomStart: Float) = this
     }
 
 @Composable
-fun GlassComment(user: String, text: String, modifier: Modifier = Modifier) {
-    // animasi masuk: naik dari bawah + membesar halus + muncul
+fun GlassComment(user: String, text: String, age: Int, modifier: Modifier = Modifier) {
+    // masuk: naik dari bawah dengan pegas (sedikit memantul) + membesar + muncul
     val p = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { p.animateTo(1f, tween(600, easing = FastOutSlowInEasing)) }
+    LaunchedEffect(Unit) { p.animateTo(1f, spring(dampingRatio = .68f, stiffness = Spring.StiffnessLow)) }
+    // makin lama komentar, makin redup dan kecil (menuju keluar)
+    val ageA by animateFloatAsState(when (age) { 0 -> 1f; 1 -> .88f; 2 -> .7f; else -> .5f }, tween(500), label = "ca")
+    val ageS by animateFloatAsState(when (age) { 0 -> 1f; 1 -> .97f; 2 -> .94f; else -> .91f }, tween(500), label = "cs")
     Row(
         modifier.padding(top = 10.dp).fillMaxWidth()
             .graphicsLayer {
-                alpha = p.value
-                translationY = (1f - p.value) * 80.dp.toPx()
-                val sc = .9f + .1f * p.value
+                val e = p.value
+                alpha = (e * 1.8f).coerceIn(0f, 1f) * ageA
+                translationY = (1f - e) * 70.dp.toPx()
+                val sc = (.82f + .18f * e) * ageS
                 scaleX = sc; scaleY = sc
             }
             .liquidGlass(RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 12.dp),
@@ -308,21 +328,32 @@ fun LyricsView(lines: List<Line>, pos: Long, msg: String, modifier: Modifier) {
     val idx = lines.indexOfLast { it.t <= pos }.coerceAtLeast(0)
     val state = rememberLazyListState()
     var shownLines by remember { mutableStateOf<List<Line>?>(null) }
+    var prevIdx by remember { mutableIntStateOf(0) }
     LaunchedEffect(lines, idx) {
-        if (shownLines !== lines) { shownLines = lines; state.scrollToItem(idx) }   // lagu baru: langsung ke posisi
-        else state.animateScrollToItem(idx)                                          // ganti baris: menggulir halus
+        if (shownLines !== lines) {            // lagu baru: langsung ke posisi
+            shownLines = lines; state.scrollToItem(idx); prevIdx = idx; return@LaunchedEffect
+        }
+        val item = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == idx }
+        if (item != null && abs(idx - prevIdx) <= 3) {
+            // gulir mulus dengan kurva ease-out, lalu koreksi posisi tepat
+            state.animateScrollBy(item.offset.toFloat(), tween(800, easing = CubicBezierEasing(.22f, 1f, .36f, 1f)))
+            state.scrollToItem(idx)
+        } else state.animateScrollToItem(idx)
+        prevIdx = idx
     }
     BoxWithConstraints(modifier.edgeFade(.14f, .86f)) {
         LazyColumn(Modifier.fillMaxSize(), state = state, userScrollEnabled = false,
             contentPadding = PaddingValues(top = maxHeight * .36f, bottom = maxHeight)) {
             itemsIndexed(lines) { i, l ->
                 val d = abs(i - idx)
-                val a by animateFloatAsState(when (d) { 0 -> 1f; 1 -> .5f; 2 -> .32f; else -> .18f }, tween(600), label = "la")
-                val sc by animateFloatAsState(if (d == 0) 1f else .8f, tween(600), label = "ls")
-                Text(l.s, color = Color.White, fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(vertical = 6.dp).graphicsLayer {
-                        alpha = a; scaleX = sc; scaleY = sc; transformOrigin = TransformOrigin(0f, .5f)
-                    })
+                val a by animateFloatAsState(when (d) { 0 -> 1f; 1 -> .55f; 2 -> .34f; else -> .2f }, spring(stiffness = Spring.StiffnessLow), label = "la")
+                val sc by animateFloatAsState(if (d == 0) 1f else .82f, spring(dampingRatio = .8f, stiffness = Spring.StiffnessLow), label = "ls")
+                val bl by animateDpAsState(when (d) { 0 -> 0.dp; 1 -> 0.4.dp; 2 -> 1.2.dp; else -> 2.dp }, tween(600), label = "lb")
+                Text(l.s, color = Color.White, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold,
+                    style = LocalTextStyle.current.copy(shadow = Shadow(Color.Black.copy(.4f), Offset(0f, 2f), 8f)),
+                    modifier = Modifier.padding(vertical = 6.dp)
+                        .graphicsLayer { alpha = a; scaleX = sc; scaleY = sc; transformOrigin = TransformOrigin(0f, .5f) }
+                        .then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(bl, BlurredEdgeTreatment.Unbounded) else Modifier))
             }
         }
     }

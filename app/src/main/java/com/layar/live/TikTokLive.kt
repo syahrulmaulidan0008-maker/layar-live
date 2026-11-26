@@ -10,7 +10,7 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import kotlin.concurrent.thread
 
-data class Comment(val id: Long, val user: String, val text: String)
+data class Comment(val id: Long, val user: String, val text: String, val at: Long = android.os.SystemClock.elapsedRealtime())
 
 private var nextId = 0L   // ID unik di seluruh aplikasi (dipakai sebagai key daftar komentar)
 
@@ -33,6 +33,7 @@ class TikTokLive(private val relay: String, user: String, private val onComment:
         thread {
             try {
                 direct = io.github.jwdeveloper.tiktok.TikTokLive.newClient(name)
+                    .onConnected { _, _ -> post("sistem", "Tersambung ke @$name, menunggu komentar…") }
                     .onComment { _, e -> post(e.user.profileName, e.text) }
                     .onError { _, e -> post("sistem", "Error: ${e.exception.message}") }
                     .buildAndConnect()

@@ -1,1 +1,1 @@
-{"name":"relay","private":true,"dependencies":{"tiktok-live-connector":"^1.2.3","ws":"^8.23.0"}}
+{"name":"relay","private":true,"dependencies":{"tiktok-live-connector":"^2.5.0","ws":"^8.23.0"}}

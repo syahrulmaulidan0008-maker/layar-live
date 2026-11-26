@@ -112,8 +112,8 @@ fun Screen() {
                 val d = p.getDominantColor(0xFF8A4A2B.toInt())
                 val m = p.getMutedColor(p.getVibrantColor(0xFF2A3560.toInt()))
                 colors = Color(ColorUtils.blendARGB(d, 0, .2f)) to Color(m)
-                // sampul diperkecil lalu diperbesar lagi = efek blur yang jalan di semua versi Android
-                runCatching { Bitmap.createScaledBitmap(Bitmap.createScaledBitmap(b, 96, 96, true), 32, 32, true) }.getOrNull()?.let { bg = it }
+                // sampul tetap cukup tajam supaya fotonya terlihat; blur halus ditambah di Composable (Android 12+)
+                runCatching { Bitmap.createScaledBitmap(b, 240, 240, true) }.getOrNull()?.let { bg = it }
             }
         }
     }
@@ -164,10 +164,13 @@ fun Screen() {
     ) {
         // latar: sampul lagu yang diburamkan, berganti halus (crossfade) tiap ganti lagu
         Crossfade(targetState = bg, modifier = Modifier.fillMaxSize(), animationSpec = tween(1200), label = "bg") { b ->
-            if (b != null) Image(b.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = .85f, filterQuality = FilterQuality.High)
+            if (b != null) Image(b.asImageBitmap(), null,
+                Modifier.fillMaxSize().then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(14.dp, BlurredEdgeTreatment.Unbounded) else Modifier),
+                contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
         }
-        // lapisan gelap tipis supaya teks putih tetap terbaca
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(.25f), Color.Black.copy(.40f), Color.Black.copy(.75f)))))
+        // lapisan gelap sangat tipis, hanya menebal di bawah supaya komentar tetap terbaca
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+            0f to Color.Black.copy(.06f), .55f to Color.Black.copy(.14f), 1f to Color.Black.copy(.5f))))
 
         CompositionLocalProvider(LocalContentColor provides Color.White) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) {

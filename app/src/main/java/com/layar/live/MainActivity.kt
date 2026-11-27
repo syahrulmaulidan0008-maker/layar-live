@@ -94,6 +94,7 @@ fun Screen() {
     var lines by remember { mutableStateOf(emptyList<Line>()) }
     var msg by remember { mutableStateOf("") }
     val comments = remember { mutableStateListOf<Comment>() }
+    val pending = remember { ArrayDeque<Comment>() }   // antrean: komentar ditampilkan satu per satu supaya transisinya terlihat
     var colors by remember { mutableStateOf(Color(0xFF8A4A2B) to Color(0xFF2A3560)) }
     var angle by remember { mutableFloatStateOf(0f) }
     var phase by remember { mutableFloatStateOf(0f) }
@@ -129,12 +130,29 @@ fun Screen() {
         var c: TikTokLive? = null
         if (user.isNotBlank()) {
             c = TikTokLive(relay, user) { n ->
-                comments.removeAll { it.user == "sistem" }   // pesan status diganti komentar asli
-                comments.add(n)
-                while (comments.size > 4) comments.removeAt(0)
+                if (n.user == "sistem") {            // pesan status langsung tampil
+                    comments.removeAll { it.user == "sistem" }
+                    comments.add(n)
+                    while (comments.size > 4) comments.removeAt(0)
+                } else {
+                    pending.addLast(n)
+                    while (pending.size > 8) pending.removeFirst()   // live ramai: buang yang paling lama menunggu
+                }
             }.also { it.start() }
         }
         onDispose { c?.stop() }
+    }
+
+    // keluarkan antrean satu per satu: santai kalau sepi, lebih cepat kalau ramai
+    LaunchedEffect(Unit) {
+        while (true) {
+            val n = pending.removeFirstOrNull()
+            if (n == null) { delay(80); continue }
+            comments.removeAll { it.user == "sistem" }   // pesan status diganti komentar asli
+            comments.add(n)
+            while (comments.size > 4) comments.removeAt(0)
+            delay(when { pending.size > 5 -> 380L; pending.size > 2 -> 600L; else -> 850L })
+        }
     }
 
     // komentar yang sudah lama keluar sendiri dengan animasi
@@ -284,6 +302,9 @@ fun GlassComment(user: String, text: String, age: Int, modifier: Modifier = Modi
     val p = remember { Animatable(0f) }
     LaunchedEffect(Unit) { p.animateTo(1f, spring(dampingRatio = .68f, stiffness = Spring.StiffnessLow)) }
     // makin lama komentar, makin redup dan kecil (menuju keluar)
+    // kilau cahaya menyapu kartu satu kali saat baru masuk
+    val sh = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { delay(120); sh.animateTo(1f, tween(900, easing = FastOutSlowInEasing)) }
     val ageA by animateFloatAsState(when (age) { 0 -> 1f; 1 -> .88f; 2 -> .7f; else -> .5f }, tween(500), label = "ca")
     val ageS by animateFloatAsState(when (age) { 0 -> 1f; 1 -> .97f; 2 -> .94f; else -> .91f }, tween(500), label = "cs")
     Row(
@@ -295,7 +316,15 @@ fun GlassComment(user: String, text: String, age: Int, modifier: Modifier = Modi
                 val sc = (.82f + .18f * e) * ageS
                 scaleX = sc; scaleY = sc
             }
-            .liquidGlass(RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 12.dp),
+            .liquidGlass(RoundedCornerShape(50))
+            .drawWithContent {
+                drawContent()
+                if (sh.value in 0.01f..0.99f) {
+                    val x = size.width * (sh.value * 1.5f - .25f)
+                    drawRect(Brush.horizontalGradient(listOf(Color.Transparent, Color.White.copy(.38f), Color.Transparent), startX = x - 140f, endX = x + 140f))
+                }
+            }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(Modifier.size(28.dp).clip(CircleShape).background(Color.White.copy(.35f)), contentAlignment = Alignment.Center) {

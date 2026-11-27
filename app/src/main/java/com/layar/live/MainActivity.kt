@@ -72,6 +72,14 @@ fun Modifier.liquidGlass(shape: Shape) = this
     }
     .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(.75f), Color.White.copy(.08f), Color.White.copy(.4f))), shape)
 
+/** Warna dari sampul dibuat cukup hidup (tidak pucat / terlalu gelap) supaya latar terlihat bagus; sampul abu-abu tidak dipaksa berwarna. */
+private fun vivid(argb: Int, minS: Float = .5f, lMin: Float = .34f, lMax: Float = .56f): Color {
+    val h = FloatArray(3); ColorUtils.colorToHSL(argb, h)
+    if (h[1] > .08f) h[1] = h[1].coerceIn(minS, .95f)
+    h[2] = h[2].coerceIn(lMin, lMax)
+    return Color(ColorUtils.HSLToColor(h))
+}
+
 private fun fmt(ms: Long) = (ms / 1000).let { "%d:%02d".format(it / 60, it % 60) }
 
 @Composable
@@ -109,11 +117,11 @@ fun Screen() {
         track.cover?.let { b ->
             withContext(Dispatchers.Default) {
                 val p = Palette.from(b).generate()
-                val d = p.getDominantColor(0xFF8A4A2B.toInt())
-                val m = p.getMutedColor(p.getVibrantColor(0xFF2A3560.toInt()))
-                colors = Color(ColorUtils.blendARGB(d, 0, .2f)) to Color(m)
+                val v = p.getVibrantColor(p.getDominantColor(0xFF8A4A2B.toInt()))
+                val m = p.getDarkVibrantColor(p.getMutedColor(v))
+                colors = vivid(v) to vivid(m, minS = .4f, lMin = .12f, lMax = .28f)   // atas: terang hidup, bawah: gelap senada
                 // sampul tetap cukup tajam supaya fotonya terlihat; blur halus ditambah di Composable (Android 12+)
-                runCatching { Bitmap.createScaledBitmap(b, 240, 240, true) }.getOrNull()?.let { bg = it }
+                runCatching { Bitmap.createScaledBitmap(b, 320, 320, true) }.getOrNull()?.let { bg = it }
             }
         }
     }
@@ -157,20 +165,25 @@ fun Screen() {
     val top by animateColorAsState(colors.first, tween(1000), label = "top")
     val accent by animateColorAsState(colors.second, tween(1000), label = "acc")
 
+    // gerak zoom sangat pelan pada foto latar supaya terasa hidup
+    val kb by rememberInfiniteTransition(label = "kb").animateFloat(1.12f, 1.26f, infiniteRepeatable(tween(22000, easing = LinearEasing), RepeatMode.Reverse), label = "kbs")
+
     Box(
         Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(listOf(top, Color(ColorUtils.blendARGB(top.toArgb(), 0, .6f)), Color(0xFF05070D)), endY = 2200f))
-            .background(Brush.radialGradient(listOf(accent.copy(.35f), Color.Transparent), center = Offset(900f, 1700f), radius = 900f))
+            // dasar: gradasi warna dari sampul (berganti halus tiap lagu)
+            .background(Brush.verticalGradient(listOf(top, Color(ColorUtils.blendARGB(top.toArgb(), accent.toArgb(), .55f)), accent)))
     ) {
-        // latar: sampul lagu yang diburamkan, berganti halus (crossfade) tiap ganti lagu
-        Crossfade(targetState = bg, modifier = Modifier.fillMaxSize(), animationSpec = tween(1200), label = "bg") { b ->
+        // foto sampul semi-transparan di atas warna dasar: warna sampul tetap tembus, foto tetap terlihat
+        Crossfade(targetState = bg, modifier = Modifier.fillMaxSize(), animationSpec = tween(1400), label = "bg") { b ->
             if (b != null) Image(b.asImageBitmap(), null,
-                Modifier.fillMaxSize().then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(14.dp, BlurredEdgeTreatment.Unbounded) else Modifier),
-                contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
+                Modifier.fillMaxSize()
+                    .graphicsLayer { scaleX = kb; scaleY = kb }
+                    .then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(18.dp, BlurredEdgeTreatment.Unbounded) else Modifier),
+                contentScale = ContentScale.Crop, alpha = .72f, filterQuality = FilterQuality.High)
         }
-        // lapisan gelap sangat tipis, hanya menebal di bawah supaya komentar tetap terbaca
+        // kilau kaca lembut di atas, dan penggelap halus di bawah supaya komentar tetap terbaca
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-            0f to Color.Black.copy(.06f), .55f to Color.Black.copy(.14f), 1f to Color.Black.copy(.5f))))
+            0f to Color.White.copy(.10f), .28f to Color.Transparent, .6f to Color.Black.copy(.10f), 1f to Color.Black.copy(.50f))))
 
         CompositionLocalProvider(LocalContentColor provides Color.White) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) {

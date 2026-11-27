@@ -15,6 +15,21 @@ const log = (...a) => console.log(`[${stamp()}]`, ...a);
 process.on('uncaughtException', (e) => log('Error:', e?.message || e));
 process.on('unhandledRejection', (e) => log('Ditolak:', e?.message || e));
 
+// <pick>
+// Ambil teks & nama dari event chat dengan beberapa kemungkinan nama field (format TikTok bisa berubah)
+const TEXT_KEYS = ['comment', 'content', 'text', 'message', 'msg'];
+function pickText(d) {
+  for (const k of TEXT_KEYS) if (typeof d?.[k] === 'string' && d[k].trim()) return d[k].trim();
+  for (const [k, v] of Object.entries(d || {})) if (typeof v === 'string' && v.trim() && /comment|content|text|message|msg/i.test(k)) return v.trim();
+  return '';
+}
+function pickName(d) {
+  const u = d?.user || d?.sender || {};
+  return u.uniqueId || u.displayId || u.nickname || d?.uniqueId || d?.nickname || 'penonton';
+}
+const dump = (o) => JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)).slice(0, 1500);
+// </pick>
+
 // ---- satu koneksi TikTok per username, dibagi ke semua APK yang memantau username itu ----
 const rooms = new Map();
 
@@ -49,9 +64,13 @@ async function connectRoom(r) {
   if (r.dead) return;
   const conn = (r.conn = makeConn(r.user));
   conn.on(WebcastEvent.CHAT, (d) => {
-    const name = d?.user?.uniqueId || d?.user?.nickname || 'penonton';
-    log(`@${name}: ${d.comment}`);
-    broadcast(r, name, d.comment);
+    const name = pickName(d), text = pickText(d);
+    if (!text) {                                   // isi komentar tidak terbaca: tampilkan data mentah sekali supaya bisa diperbaiki
+      if (!r.warned) { r.warned = true; log('PERINGATAN: teks komentar kosong. Data mentah:', dump(d)); info(r, 'Komentar masuk tapi isinya tidak terbaca (format TikTok berubah).'); }
+      return;
+    }
+    log(`@${name}: ${text}`);
+    broadcast(r, name, text);
   });
   conn.on(WebcastEvent.STREAM_END, () => { info(r, `Live @${r.user} berakhir. Menunggu live lagi…`); scheduleRetry(r, 15000); });
   conn.on(ControlEvent.DISCONNECTED, () => {

@@ -71,7 +71,7 @@ class TikTokLive(private val relay: String, user: String, private val onComment:
                 post("sistem", "Tersambung ke relay, menunggu komentar…")
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
-                runCatching { JSONObject(text).let { post(it.getString("user"), it.getString("text")) } }
+                runCatching { JSONObject(text).let { j -> val msg = j.optString("text"); if (msg.isNotBlank()) post(j.optString("user", "?"), msg) } }
             }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(1000, null) }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { lost(webSocket, "ditutup server") }

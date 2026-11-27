@@ -60,6 +60,41 @@ Desain server v2.1: satu koneksi TikTok per username dibagi ke semua APK; koneks
 ## 7. Ide lanjutan
 - Foto avatar asli penonton; efek kaca dengan refraksi; APK rilis bertanda tangan tetap (supaya update tidak menghapus pengaturan); layar tetap menyala saat live (`FLAG_KEEP_SCREEN_ON`); fallback lirik Musixmatch; mode landscape/overlay.
 
+## 8. Bug yang sudah ditemukan dan diperbaiki (jangan terulang)
+| Gejala | Penyebab | Perbaikan |
+|---|---|---|
+| Build gagal `Conflicting declarations` | `val top` dan `val accent` ditulis dua kali di `Screen()` | Hanya satu deklarasi masing-masing |
+| Build gagal `'val maxWidth' cannot be called in this context with an implicit receiver` | `maxWidth` dipakai di dalam Row/Column bersarang di `BoxWithConstraints` | `val w = maxWidth` lalu pakai `w` |
+| Build gagal bentrok `onFailure` | `post()` bertipe Boolean (`= main.post{}`) dipakai sebagai body `override fun onFailure(...) = post(...)` | Body pakai blok `{ ... }`, bukan `=` |
+| Relay APK sering putus | `OkHttpClient()` default readTimeout 10 dtk memutus WebSocket yang sepi; `onClosed` tidak ditangani | `readTimeout(0)`, `pingInterval(15s)`, tangani `onClosed`, backoff, abaikan socket lama |
+| Komentar tidak masuk walau relay hidup | Server membuat koneksi TikTok baru tiap APK sambung ulang (rate limit) | v2.1: satu koneksi per username dibagi, grace 90 dtk, auto-reconnect |
+| Relay crash saat APK tersambung | `new TikTokLiveConnection(user)` tanpa opsi (v2.5.0 butuh objek) | Selalu `new TikTokLiveConnection(user, {})` |
+| Log PC penuh komentar tapi APK kosong | `d.comment` = `undefined`; JSON membuang field itu; `getString("text")` melempar lalu ditelan `runCatching` | `pickText()`/`pickName()`, dump data mentah, `optString` di APK |
+| Latar hanya bercak warna | Sampul diperkecil ke 32x32 lalu ditimpa gradasi + lapisan gelap tebal | Sampul 240px, blur 14dp (Android 12+), lapisan gelap tipis |
+| Username/relay hilang setelah update APK | Kunci debug CI berbeda tiap build, harus uninstall | Isi ulang; solusi tetap: keystore sendiri (belum) |
+| Perintah `pkill -f "node server.js"` mematikan shell sandbox | Pola cocok dengan perintah itu sendiri | Jangan dipakai di sandbox |
+
+## 9. Kode yang JANGAN diubah (sudah terbukti / rapuh)
+Ubah hanya jika benar-benar perlu, dan uji di CI setelahnya.
+- **`TikTokLive.kt`**: `OkHttpClient.Builder().readTimeout(0).pingInterval(15s)` (jangan kembali ke `OkHttpClient()`); `private fun post(...) = main.post{...}` bertipe Boolean, jadi semua override listener (`onFailure`, `onClosed`, `onClosing`) harus berbody blok `{ }`; logika `lost()` yang mengabaikan `webSocket !== ws`; `optString` + cek `isNotBlank` pada pesan relay; `nextId` untuk key komentar.
+- **`MainActivity.kt`**: `val w = maxWidth` di `BoxWithConstraints`; satu `top`/`accent`; scroll lirik `animateScrollBy(item.offset)` lalu `scrollToItem(idx)` (koreksi posisi) dan `contentPadding(top = maxHeight*.36f, bottom = maxHeight)`; `Modifier.blur` selalu dibungkus `Build.VERSION.SDK_INT >= 31`; komentar: `LazyColumn(reverseLayout = true, userScrollEnabled = false)` + `animateItem(...)` + `GlassComment` (Animatable pegas, alpha per umur); pesan `sistem` dihapus saat komentar asli masuk dan tidak kedaluwarsa; vinyl digambar lewat kode (keputusan Opsi B, jangan pakai PNG).
+- **`AndroidManifest.xml`**: `usesCleartextTraffic="true"` (wajib untuk `ws://`), izin INTERNET, deklarasi `MusicListener` dengan izin Notification Listener.
+- **`server/server.js`**: `new TikTokLiveConnection(user, opts)` dengan objek opsi; peta `rooms` per username (huruf kecil) + `GRACE_MS`; ping 15 dtk + `terminate()` klien mati; `pickText/pickName` (tambahkan field baru ke `TEXT_KEYS`, jangan hapus); mode `--demo`; pesan status memakai user `sistem`.
+- **Build/CI**: Kotlin 2.0.20, AGP 8.5.2, Gradle 8.9, Java 17, Compose BOM 2024.09.00, compile/target SDK 34 (CI satu-satunya cara build, jangan naikkan versi tanpa alasan); `permissions: contents: write`; langkah "Ringkasan error".
+- **Keamanan**: jangan tulis token ke file/config (pakai `http.extraheader`); minta pengguna mencabut token setelah selesai.
+
+## 10. Bug/risiko yang MASIH ada (belum diperbaiki)
+1. **Layar HP bisa mati saat live** (tidak ada `FLAG_KEEP_SCREEN_ON`). Usul: tambahkan di `MainActivity`.
+2. **Lirik hanya `/api/get` (cocok persis)**. Judul seperti "(feat. X)" atau "- Remastered" gagal ditemukan. Usul: fallback `/api/search` lalu pilih hasil dengan durasi terdekat.
+3. **`MusicListener` memilih sesi media pertama dari aplikasi apa pun** (bisa YouTube/Chrome, bukan musik); tidak ada filter paket. Listener `addOnActiveSessionsChangedListener` didaftarkan tiap `onListenerConnected` tanpa dilepas (bocor). `publish()` berhenti saat `ctrl == null` sehingga data lagu lama tertinggal setelah pemutar ditutup.
+4. **Library TikTok Java (`jwdeveloper ... 1.8.5-Release`) masih jadi dependensi** padahal mode langsung tidak andal; memperbesar APK. Boleh dihapus kalau relay sudah dipakai penuh (hapus juga `startDirect()`).
+5. **`versionCode = 1` tetap + kunci debug berubah tiap build** -> update harus uninstall. Usul: keystore tetap + naikkan versionCode otomatis.
+6. **Workflow membuat rilis tiap push**, termasuk commit yang hanya mengubah `SKILL.md`/`server/`. Nomor rilis (`v1.<run_number>`) melompat karena run gagal ikut dihitung. Usul: `paths-ignore` untuk `SKILL.md` dan `server/**`, atau tulis `[skip ci]` di pesan commit.
+7. **Relay tanpa autentikasi dan memakai `ws://` tanpa enkripsi**: aman hanya di Wi-Fi rumah. Server tidak membatasi jumlah username per PC.
+8. **Rate limit Euler Stream** (tanpa API key) bisa membuat koneksi TikTok gagal; kalau terjadi, buat API key dan `set SIGN_API_KEY=...`.
+9. **Efek kaca belum membiaskan latar** dan avatar komentar masih huruf pertama.
+10. **Semua perubahan terbaru (v1.8 dan v1.9) belum diuji di HP**; yang sudah terbukti hanya: relay PC menerima komentar TikTok (log pengguna).
+
 ## Catatan perubahan
 - v1.3: build pertama sukses, ikon, rilis otomatis.
 - v1.4-1.5: UI putih, sampul besar, transisi lirik/komentar; perbaikan `onFailure` dan deklarasi ganda `top`/`accent`.
@@ -67,4 +102,4 @@ Desain server v2.1: satu koneksi TikTok per username dibagi ke semua APK; koneks
 - (sesi berikut, commit `55e0a91`) relay dipindah ke `tiktok-live-connector` 2.x.
 - Sesi terbaru: **penyebab relay sering putus** = OkHttp readTimeout default 10 dtk memutus WebSocket yang sepi, dan tiap sambung ulang APK membuat koneksi TikTok baru di server (kena rate limit, komentar tidak datang). Perbaikan APK: `readTimeout(0)`, `pingInterval(15s)`, tangani `onClosed`, backoff, abaikan socket lama. Perbaikan server: v2.1 (koneksi dibagi per username, grace 90 dtk, auto-reconnect, ping, `--demo`). Latar kini foto sampul 240px (bukan bercak warna 32px) + blur 14dp (Android 12+), lapisan gelap tipis. Belum diuji di HP.
 - Sesi berikut: log PC pengguna menunjukkan relay menerima ratusan event chat TikTok tapi `d.comment` = `undefined` (JSON.stringify membuang field itu, APK `getString("text")` melempar exception lalu ditelan `runCatching`, jadi komentar tidak tampil). Perbaikan: server memakai `pickText()` (coba `comment/content/text/message/msg` lalu field apa pun yang namanya mirip) dan `pickName()` (uniqueId/displayId/nickname); kalau teks tetap kosong, server mencetak data mentah event sekali (`PERINGATAN: teks komentar kosong. Data mentah: ...`) dan mengirim pesan status ke APK. APK memakai `optString` dan mengabaikan pesan kosong. Jika masih kosong, baca "Data mentah" di log PC untuk tahu nama field yang benar lalu tambahkan ke `TEXT_KEYS`. Belum diuji di HP.
-
+- Sesi terbaru: tambah bagian 8 (riwayat bug), 9 (kode yang jangan diubah), 10 (bug/risiko yang masih ada) setelah peninjauan `MusicListener.kt`, `Lyrics.kt`, workflow, dan manifest. Tidak ada perubahan kode.
